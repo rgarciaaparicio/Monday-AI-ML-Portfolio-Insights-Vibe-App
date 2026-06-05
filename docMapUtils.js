@@ -9,6 +9,86 @@ const chunkArray = (arr, size) =>
     arr.slice(i * size, i * size + size)
   );
 
+// --- Advanced Monday Document Block Parser ---
+
+// Helper to recursively extract text from Monday's stringified JSON content
+const extractTextFromDelta = (contentObj) => {
+  if (!contentObj) return "";
+  let extractedText = "";
+
+  // 1. Handle Delta Format (Quill.js structure often used by Monday)
+  if (contentObj.deltaFormat && Array.isArray(contentObj.deltaFormat)) {
+    extractedText += contentObj.deltaFormat
+      .map((op) => op.insert || "")
+      .join("");
+  }
+
+  // 2. Handle nested blocks (sometimes notices contain other blocks)
+  if (contentObj.blocks && Array.isArray(contentObj.blocks)) {
+    extractedText += contentObj.blocks
+      .map((b) => parseMondayBlock(b))
+      .join("\n");
+  }
+
+  // 3. Fallback for generic text/content properties
+  if (contentObj.text && typeof contentObj.text === "string") {
+    extractedText += contentObj.text + " ";
+  }
+
+  return extractedText.trim();
+};
+
+/**
+ * Core parsing function to process a single Monday document block.
+ * @param {Object} block - A single block object from the Monday API
+ * @returns {String} - The extracted plain text or markdown
+ */
+export const parseMondayBlock = (block) => {
+  if (!block) return "";
+
+  // 1. Happy Path: Monday provides clean markdown directly
+  if (block.markdown) {
+    return block.markdown;
+  }
+
+  // 2. Deep Extraction Path: markdown is null (e.g., Notice/Layout blocks)
+  if (block.content) {
+    try {
+      // Monday API usually returns `content` as a stringified JSON payload
+      const parsedContent =
+        typeof block.content === "string"
+          ? JSON.parse(block.content)
+          : block.content;
+
+      return extractTextFromDelta(parsedContent);
+    } catch (error) {
+      console.warn("DocMapUtils: Failed to parse complex block content.", block);
+      return "";
+    }
+  }
+
+  return "";
+};
+
+/**
+ * Processes an array of document blocks into a single readable string for the AI.
+ * @param {Array} blocks - Array of Monday document blocks
+ * @returns {String} - Combined document text
+ */
+export const processDocumentBlocks = (blocks) => {
+  if (!Array.isArray(blocks)) return "";
+
+  return blocks
+    .map((block) => {
+      const text = parseMondayBlock(block);
+      return text ? text.trim() : null;
+    })
+    .filter(Boolean) // Remove nulls/empty strings
+    .join("\n\n");
+};
+
+// --- Document Value Parser ---
+
 /**
  * Safely parses the raw JSON string from a Monday column value to extract a doc ID.
  * @param {string} raw - The raw JSON string from the column value
@@ -77,9 +157,11 @@ function parseValue(raw) {
   }
 }
 
+// --- Main fetchDocMap Function ---
+
 /**
  * Fetches and maps Item IDs to Document IDs.
- * * @param {Object} boardInstance - The Monday client or seamless API wrapper.
+ * @param {Object} boardInstance - The Monday client or seamless API wrapper.
  * @param {Array<string|number>} itemIds - Array of item IDs to query.
  * @param {Array<string>} [knownDocColumnIds=[]] - Optional: specific column IDs to check.
  * @returns {Promise<Object>} A map of { [itemId]: docId }
