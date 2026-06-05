@@ -1,33 +1,58 @@
 /**
  * docMapUtils.js
- * Deep extraction utilities for Monday.com document payloads.
- * Engineered to handle nested stringified JSONs inside Notice and Layout blocks.
+ * Robust extractor for Monday.com document blocks.
+ * Goals:
+ * Extract as much human-readable content as possible
+ * Handle undocumented/nested structures
+ * Prevent circular references
+ * Prevent stack overflows
+ * Preserve useful metadata
+ * Produce clean LLM-friendly output
+ *
+ * Board: AI/ML Portfolio (18397543010)
+ * Known doc columns:
+ *   - portfolio_project_doc (doc) — "Project Status Summary"
+ *   - direct_doc_mm0ydfp4 (direct_doc) — "monday Doc v2"
+ * Known file columns:
+ *   - file_mm0fx4g0 (file) — "Client Report"
+ *   - file_mm0jjsta (file) — "Intake"
+ *   - file_mm0j1gf4 (file) — "Final Report"
  */
 
-// Helper function to safely chunk arrays for GraphQL queries
+// Known doc/file column IDs on the AI/ML Portfolio board
+const KNOWN_DOC_COLUMN_IDS = [
+  'portfolio_project_doc',
+  'direct_doc_mm0ydfp4',
+  'file_mm0fx4g0',
+  'file_mm0jjsta',
+  'file_mm0j1gf4',
+];
+
+const DOC_COLUMN_TYPES = [
+  'doc', 'direct_doc', 'file', 'workdoc', 'board_relation', 'link'
+];
+
+const BOARD_ID = '18397543010';
+
 const chunkArray = (arr, size) =>
   Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
     arr.slice(i * size, i * size + size)
   );
 
-/**
- * Safely parses the raw JSON string from a Monday column value to extract a doc ID.
- */
+// --- DOCUMENT VALUE PARSER ---
+
 function parseValue(raw) {
   if (!raw || raw === 'null' || raw === '{}' || raw === '') return null;
   
   const trimmed = raw.trim();
   
-  // 1. Direct number check
   if (/^\d{8,15}$/.test(trimmed)) return trimmed;
 
-  // 2. The Sledgehammer: Regex scrape the raw string for Monday Doc URLs
   if (typeof raw === 'string') {
     const urlMatch = raw.match(/\/docs\/(\d+)/) || raw.match(/doc_id=(\d+)/);
     if (urlMatch && urlMatch[1]) return urlMatch[1];
   }
   
-  // 3. Fallback to structured JSON parsing
   try {
     const parsed = JSON.parse(raw);
     let foundId = null;
@@ -54,137 +79,163 @@ function parseValue(raw) {
   }
 }
 
-// --- DEEP RECURSIVE UN-WRAPPER ---
+// --- ROBUST BLOCK EXTRACTOR ---
 
-/**
- * The deep recursive un-wrapper.
- * Safely navigates Monday's structural nodes and stringified JSON payloads.
- */
-const unwrapMondayNode = (node) => {
-  let extracted = "";
-
-  if (node == null) return "";
-
-  // 1. Unpack Stringified JSON (Monday wraps content heavily)
-  if (typeof node === 'string') {
-    try {
-      const parsed = JSON.parse(node);
-      return unwrapMondayNode(parsed);
-    } catch (e) {
-      // If parsing fails, it's a structural string (like a hex code or alignment value).
-      // We discard it to prevent noise, relying on 'insert' keys below for actual text.
-      return "";
-    }
-  }
-
-  // 2. Traverse Arrays natively
-  if (Array.isArray(node)) {
-    return node.map(unwrapMondayNode).join("");
-  }
-
-  // 3. Traverse Objects to find 'insert' or deeply nested stringified structures
-  if (typeof node === 'object') {
-    // Core Quill Delta text property
-    if (node.hasOwnProperty('insert') && typeof node.insert === 'string') {
-      extracted += node.insert;
-    }
-
-    // Search deeper for nested content (e.g., child paragraphs inside a Notice block)
-    for (const [key, value] of Object.entries(node)) {
-      // Performance & Noise Filter: Skip known styling and metadata keys
-      const noiseKeys = [
-         'attributes', 'style', 'id', 'type', 'color', 'background', 
-         'noticeType', 'alignment', 'direction', 'version', 'size', 'name'
-      ];
-      if (noiseKeys.includes(key)) continue;
-
-      if (typeof value === 'object' && value !== null) {
-        // Continue down the object tree
-        extracted += unwrapMondayNode(value);
-      } else if (typeof value === 'string') {
-        try {
-          // This catches the hidden stringified JSONs inside Notice block arrays!
-          const parsedVal = JSON.parse(value);
-          extracted += unwrapMondayNode(parsedVal);
-        } catch (err) {
-          // Ignore standard string metadata
-        }
-      }
-    }
-  }
-
-  return extracted;
-};
-
-// --- PRIMARY BLOCK EXTRACTION ---
+const MAX_DEPTH = 50;
+const SKIP_KEYS = new Set([
+  'color',
+  'background',
+  'width',
+  'height',
+  'style'
+]);
 
 /**
  * Extracts clean text from Monday.com document blocks.
- * CRITICAL: We process ALL block types. Do not filter out 'notice' or 'layout' types,
- * because they contain critical project data nested deeply inside them.
+ * Handles circular references, stack overflow prevention, double-stringified JSON,
+ * Quill Deltas, Notice blocks, Layout blocks, and all undocumented nested structures.
  */
-export const extractTextFromMondayBlocks = (blocks) => {
-  if (!blocks || !Array.isArray(blocks)) return "";
-
-  const extractedParagraphs = blocks.map(block => {
-    // Use cleanly provided markdown if available
-    if (block.markdown && block.markdown.trim() && block.markdown !== 'null') {
-      return block.markdown;
-    }
-    // Skip purely structural blocks with no content payload
-    if (!block.content) return "";
-    
-    return unwrapMondayNode(block.content);
-  });
-
-  // Filter empty results and join with double line breaks for clean AI consumption
-  return extractedParagraphs.filter(text => text.trim().length > 0).join('\n\n');
-};
-
-/**
- * Legacy-compatible wrapper. Flattens nested block trees then extracts.
- */
-export function parseMondayBlock(block) {
-  if (block.markdown && block.markdown.trim() && block.markdown !== 'null') {
-    return block.markdown;
-  }
-  if (block.content) {
-    const extracted = unwrapMondayNode(block.content);
-    return extracted ? extracted.trim() : '';
-  }
-  return '';
-}
-
 export const processDocumentBlocks = (blocks) => {
-  if (!Array.isArray(blocks)) return '';
+  if (!Array.isArray(blocks) || blocks.length === 0) {
+    return '';
+  }
 
-  // Flatten nested block trees first (layout/notice blocks nest text in child arrays)
-  const flattenBlocks = (blockList) => {
-    let flat = [];
-    for (const block of blockList) {
-      flat.push(block);
-      if (Array.isArray(block.children)) flat.push(...flattenBlocks(block.children));
-      if (Array.isArray(block.blocks)) flat.push(...flattenBlocks(block.blocks));
-      if (Array.isArray(block.child_blocks)) flat.push(...flattenBlocks(block.child_blocks));
+  const seen = new WeakSet();
+  let depthWarningShown = false;
+
+  const extract = (node, depth = 0) => {
+    if (node == null) {
+      return '';
     }
-    return flat;
+
+    if (depth > MAX_DEPTH) {
+      if (!depthWarningShown) {
+        console.warn(
+          `[docMapUtils] Maximum extraction depth (${MAX_DEPTH}) reached.`
+        );
+        depthWarningShown = true;
+      }
+
+      return '';
+    }
+
+    // Prevent circular references
+    if (typeof node === 'object') {
+      if (seen.has(node)) {
+        return '';
+      }
+
+      seen.add(node);
+    }
+
+    // Strings
+    if (typeof node === 'string') {
+      const trimmed = node.trim();
+
+      if (!trimmed) {
+        return '';
+      }
+
+      // Monday sometimes embeds JSON inside strings
+      const firstChar = trimmed[0];
+
+      if (firstChar === '{' || firstChar === '[') {
+        try {
+          const parsed = JSON.parse(trimmed);
+          return extract(parsed, depth + 1);
+        } catch {
+          // Fall through and treat as plain text
+        }
+      }
+
+      return trimmed + ' ';
+    }
+
+    // Arrays
+    if (Array.isArray(node)) {
+      return node
+        .map(item => extract(item, depth + 1))
+        .join('');
+    }
+
+    // Objects
+    if (typeof node === 'object') {
+      // Explicit Quill Delta handling
+      if (
+        Object.prototype.hasOwnProperty.call(node, 'insert') &&
+        typeof node.insert === 'string'
+      ) {
+        return node.insert.endsWith('\n')
+          ? node.insert
+          : node.insert + '\n';
+      }
+
+      let output = '';
+
+      for (const [key, value] of Object.entries(node)) {
+        if (SKIP_KEYS.has(key)) {
+          continue;
+        }
+
+        output += extract(value, depth + 1);
+      }
+
+      if (output.trim() && !output.endsWith('\n')) {
+        output += '\n';
+      }
+
+      return output;
+    }
+
+    return '';
   };
 
-  const allBlocks = flattenBlocks(blocks);
+  const rawText = blocks
+    .map(block => extract(block))
+    .join('\n');
 
-  // Use the new deep unwrapper for extraction
-  return extractTextFromMondayBlocks(allBlocks);
+  // Cleanup + dedupe consecutive lines
+  const lines = rawText
+    .split('\n')
+    .map(line => line.trim().replace(/\s{2,}/g, ' '));
+
+  const result = [];
+  let previousLine = null;
+
+  for (const line of lines) {
+    if (!line) {
+      if (
+        result.length > 0 &&
+        result[result.length - 1] !== ''
+      ) {
+        result.push('');
+      }
+      continue;
+    }
+
+    if (line !== previousLine) {
+      result.push(line);
+      previousLine = line;
+    }
+  }
+
+  return result.join('\n').trim();
 };
+
+// Alias for backward compatibility
+export const extractTextFromMondayBlocks = processDocumentBlocks;
 
 // --- DOC MAP LOGIC ---
 
-export async function fetchDocMap(boardInstance, itemIds, knownDocColumnIds = []) {
+export async function fetchDocMap(boardInstance, itemIds, extraDocColumnIds = []) {
   const map = {};
   if (!itemIds || itemIds.length === 0) return map;
 
+  const allDocColumnIds = [...new Set([...KNOWN_DOC_COLUMN_IDS, ...extraDocColumnIds])];
   const uniqueItemIds = [...new Set(itemIds.map(String))];
   const idChunks = chunkArray(uniqueItemIds, 50);
 
+  // STRATEGY 1: Query docs directly by Item IDs (object_id)
   try {
     for (const chunk of idChunks) {
       const query = `
@@ -204,6 +255,7 @@ export async function fetchDocMap(boardInstance, itemIds, knownDocColumnIds = []
     console.error('[DocMap] Strategy 1 failed:', e.message || e);
   }
 
+  // STRATEGY 2: Query items and inspect known doc/direct_doc/file columns, assets, and updates
   const unmappedItemIds = uniqueItemIds.filter(id => !map[id]);
   if (unmappedItemIds.length > 0) {
     try {
@@ -223,25 +275,54 @@ export async function fetchDocMap(boardInstance, itemIds, knownDocColumnIds = []
 
         items.forEach(item => {
           let foundDocId = null;
-          const docColumns = (item.column_values || []).filter(cv => 
-            knownDocColumnIds.includes(cv.id) || 
-            ['doc', 'file', 'workdoc', 'board_relation', 'link'].includes(cv.type) ||
-            (cv.value && typeof cv.value === 'string' && (cv.value.includes('document_id') || cv.value.includes('doc_id=') || cv.value.includes('fileId') || cv.value.includes('/docs/')))
-          );
 
-          for (const docCol of docColumns) {
+          // 2A. Priority: check known doc columns first
+          const priorityColumns = (item.column_values || []).filter(cv =>
+            allDocColumnIds.includes(cv.id)
+          );
+          priorityColumns.sort((a, b) => {
+            const aIsPrimary = (a.id === 'portfolio_project_doc' || a.id === 'direct_doc_mm0ydfp4') ? 0 : 1;
+            const bIsPrimary = (b.id === 'portfolio_project_doc' || b.id === 'direct_doc_mm0ydfp4') ? 0 : 1;
+            return aIsPrimary - bIsPrimary;
+          });
+
+          for (const docCol of priorityColumns) {
             const docId = parseValue(docCol.value) || parseValue(docCol.text);
             if (docId) { foundDocId = docId; break; }
           }
 
+          // 2B. Fallback: scan all columns by type
+          if (!foundDocId) {
+            const typeMatchedColumns = (item.column_values || []).filter(cv =>
+              !allDocColumnIds.includes(cv.id) && (
+                DOC_COLUMN_TYPES.includes(cv.type) ||
+                (cv.value && typeof cv.value === 'string' && (
+                  cv.value.includes('document_id') || cv.value.includes('doc_id=') ||
+                  cv.value.includes('fileId') || cv.value.includes('/docs/')
+                ))
+              )
+            );
+            for (const docCol of typeMatchedColumns) {
+              const docId = parseValue(docCol.value) || parseValue(docCol.text);
+              if (docId) { foundDocId = docId; break; }
+            }
+          }
+
+          // 2C. Assets
           if (!foundDocId && item.assets && item.assets.length > 0) {
-            const docAsset = item.assets.find(a => !a.file_extension || a.file_extension === '' || a.file_extension === 'monday' || a.name.toLowerCase().includes('doc'));
+            const docAsset = item.assets.find(a =>
+              !a.file_extension || a.file_extension === '' ||
+              a.file_extension === 'monday' || a.name.toLowerCase().includes('doc')
+            );
             if (docAsset) foundDocId = String(docAsset.id);
           }
 
+          // 2D. Updates
           if (!foundDocId && item.updates && item.updates.length > 0) {
             for (const upd of item.updates) {
-              const updAsset = (upd.assets || []).find(a => !a.file_extension || a.file_extension === '' || a.file_extension === 'monday');
+              const updAsset = (upd.assets || []).find(a =>
+                !a.file_extension || a.file_extension === '' || a.file_extension === 'monday'
+              );
               if (updAsset) { foundDocId = String(updAsset.id); break; }
               if (upd.body && upd.body.includes('doc_id=')) {
                 const match = upd.body.match(/doc_id=(\d+)/);
@@ -255,16 +336,18 @@ export async function fetchDocMap(boardInstance, itemIds, knownDocColumnIds = []
     } catch (e) { console.error('[DocMap] Strategy 2 failed:', e.message || e); }
   }
 
+  // STRATEGY 3: Query docs by AI/ML Portfolio board ID
   try {
-    const res = await boardInstance.executeGraphQL(`{ docs(object_ids: [18397543010], limit: 100) { id object_id name } }`);
+    const res = await boardInstance.executeGraphQL(`{ docs(object_ids: [${BOARD_ID}], limit: 100) { id object_id name } }`);
     const docs = res?.data?.docs || res?.docs || [];
     const itemIdSet = new Set(uniqueItemIds);
     docs.forEach(d => {
-      if (d.object_id && itemIdSet.has(String(d.object_id))) { map[String(d.object_id)] = String(d.id); } 
+      if (d.object_id && itemIdSet.has(String(d.object_id))) { map[String(d.object_id)] = String(d.id); }
       else if (d.name) { map['__name__' + d.name] = String(d.id); }
     });
   } catch (e) { /* silent fail */ }
 
+  // STRATEGY 4: Fuzzy Name Matching (Global Workspace Docs)
   const completelyUnmapped = uniqueItemIds.filter(id => !map[id]);
   if (completelyUnmapped.length > 0) {
     try {
