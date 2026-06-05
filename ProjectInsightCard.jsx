@@ -6,7 +6,7 @@ import { Spinner } from '@components/ui/spinner';
 import { useAI } from '@skills/ai-features.jsx';
 import DocsSDK from '@skills/docs-sdk.jsx';
 import { InsightsDisplay } from '@generated/components/InsightsDisplay';
-import { processDocumentBlocks } from '@generated/hooks/docMapUtils';
+import { extractTextFromMondayBlocks } from '@generated/hooks/docMapUtils';
 import { Sparkles, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 
 const HEALTH = {
@@ -52,16 +52,18 @@ export function ProjectInsightCard({ project }) {
     try {
       const sdk = new DocsSDK();
       const snap = await sdk.doc(String(docId)).get();
+
+      // Anti-Pattern Warning: Do NOT filter rawDocBlocks by type before extracting.
+      // E.g., `rawDocBlocks.filter(b => b.type === 'paragraph')` will break extraction.
       console.log(`[Extract] "${project.name}" total blocks: ${snap.blocks?.length}`);
 
-      // Use the advanced parser to extract text from notices/layouts
-      const fullContent = processDocumentBlocks(snap.blocks);
+      // Use the new deep unwrapper that handles Notice/Layout stringified payloads
+      const fullContent = extractTextFromMondayBlocks(snap.blocks);
 
       console.log(`[Extract] Combined content preview:`, fullContent.slice(0, 500));
 
       let context = '';
       if (fullContent.trim()) {
-        // Increased slice limit to ensure we don't cut off raw JSON payloads
         context += `DOCUMENT CONTENT:\n${fullContent.slice(0, 15000)}\n\n`;
       }
       if (project.weekSummary) context += `WEEK SUMMARY COLUMN:\n${project.weekSummary}\n\n`;
