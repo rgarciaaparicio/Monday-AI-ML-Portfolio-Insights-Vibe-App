@@ -6,7 +6,7 @@ import { Spinner } from '@components/ui/spinner';
 import { useAI } from '@skills/ai-features.jsx';
 import DocsSDK from '@skills/docs-sdk.jsx';
 import { InsightsDisplay } from '@generated/components/InsightsDisplay';
-import { extractTextFromMondayBlocks } from '@generated/hooks/docMapUtils';
+import { processDocumentBlocks } from '@generated/hooks/docMapUtils';
 import { Sparkles, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 
 const HEALTH = {
@@ -57,8 +57,8 @@ export function ProjectInsightCard({ project }) {
       // E.g., `rawDocBlocks.filter(b => b.type === 'paragraph')` will break extraction.
       console.log(`[Extract] "${project.name}" total blocks: ${snap.blocks?.length}`);
 
-      // Use the new deep unwrapper that handles Notice/Layout stringified payloads
-      const fullContent = extractTextFromMondayBlocks(snap.blocks);
+      // Robust extractor: handles circular refs, stack overflow, double-stringified JSON, Quill Deltas
+      const fullContent = processDocumentBlocks(snap.blocks);
 
       console.log(`[Extract] Combined content preview:`, fullContent.slice(0, 500));
 
