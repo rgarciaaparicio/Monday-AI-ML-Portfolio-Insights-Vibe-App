@@ -6,6 +6,7 @@ import { Spinner } from '@components/ui/spinner';
 import { useAI } from '@skills/ai-features.jsx';
 import DocsSDK from '@skills/docs-sdk.jsx';
 import { InsightsDisplay } from '@generated/components/InsightsDisplay';
+import { processDocumentBlocks } from '@generated/hooks/docMapUtils';
 import { Sparkles, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 
 const HEALTH = {
@@ -53,17 +54,8 @@ export function ProjectInsightCard({ project }) {
       const snap = await sdk.doc(String(docId)).get();
       console.log(`[Extract] "${project.name}" total blocks: ${snap.blocks?.length}`);
 
-      // The Sledgehammer for Blocks:
-      // The SDK's markdown parser skips complex colored boxes (noticeboxes, layouts, etc.)
-      // We will build a unified text string that forces ALL block content to be included.
-      const fullContent = (snap.blocks || []).map(block => {
-        // Prefer the clean markdown if the SDK successfully parsed it
-        if (block.markdown && block.markdown.trim()) {
-          return block.markdown;
-        }
-        // If the SDK skipped it, dump the raw block JSON for the AI to read
-        return JSON.stringify(block);
-      }).filter(Boolean).join('\n\n');
+      // Use the advanced parser to extract text from notices/layouts
+      const fullContent = processDocumentBlocks(snap.blocks);
 
       console.log(`[Extract] Combined content preview:`, fullContent.slice(0, 500));
 
