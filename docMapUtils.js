@@ -1,6 +1,7 @@
 /**
- * Utility to map Monday.com Item IDs to their attached Document IDs.
- * Built for Monday Vibe Apps.
+ * docMapUtils.js
+ * Deep extraction utilities for Monday.com document payloads.
+ * Engineered to handle nested stringified JSONs inside Notice and Layout blocks.
  */
 
 // Helper function to safely chunk arrays for GraphQL queries
@@ -53,65 +54,102 @@ function parseValue(raw) {
   }
 }
 
-// --- NEW ADVANCED BLOCK PARSER (Recursive Text Hunter) ---
+// --- DEEP RECURSIVE UN-WRAPPER ---
 
 /**
- * Recursively extracts raw text from complex double-stringified JSON payloads (like Monday's Quill Deltas)
+ * The deep recursive un-wrapper.
+ * Safely navigates Monday's structural nodes and stringified JSON payloads.
  */
-function extractTextRecursively(payload) {
-  if (!payload) return '';
-  
-  // If it's a string, attempt to parse it as JSON (Monday often double-stringifies Notice boxes)
-  if (typeof payload === 'string') {
+const unwrapMondayNode = (node) => {
+  let extracted = "";
+
+  if (node == null) return "";
+
+  // 1. Unpack Stringified JSON (Monday wraps content heavily)
+  if (typeof node === 'string') {
     try {
-      const parsed = JSON.parse(payload);
-      return extractTextRecursively(parsed);
+      const parsed = JSON.parse(node);
+      return unwrapMondayNode(parsed);
     } catch (e) {
-      // If it fails to parse, it's a normal string. 
-      // Return it if it doesn't look like a raw hex color, system ID, or URL.
-      if (payload.length > 2 && !/^[0-9a-fA-F-]+$/.test(payload) && !/^https?:\/\//.test(payload)) {
-         return payload + '\n';
-      }
-      return '';
+      // If parsing fails, it's a structural string (like a hex code or alignment value).
+      // We discard it to prevent noise, relying on 'insert' keys below for actual text.
+      return "";
     }
   }
 
-  let text = '';
-  
-  // Traverse arrays
-  if (Array.isArray(payload)) {
-    for (const item of payload) {
-      text += extractTextRecursively(item);
+  // 2. Traverse Arrays natively
+  if (Array.isArray(node)) {
+    return node.map(unwrapMondayNode).join("");
+  }
+
+  // 3. Traverse Objects to find 'insert' or deeply nested stringified structures
+  if (typeof node === 'object') {
+    // Core Quill Delta text property
+    if (node.hasOwnProperty('insert') && typeof node.insert === 'string') {
+      extracted += node.insert;
     }
-  } 
-  // Traverse objects
-  else if (typeof payload === 'object') {
-    // Specifically look for Quill 'insert' strings or generic 'text' properties
-    if (payload.insert && typeof payload.insert === 'string') {
-        text += payload.insert;
-    } else if (payload.text && typeof payload.text === 'string') {
-        text += payload.text;
-    } else {
-        // Dig deeper, ignoring styling and metadata keys to keep output clean
-        for (const key in payload) {
-            if (key !== 'attributes' && key !== 'id' && key !== 'type' && key !== 'style') {
-               text += extractTextRecursively(payload[key]);
-            }
+
+    // Search deeper for nested content (e.g., child paragraphs inside a Notice block)
+    for (const [key, value] of Object.entries(node)) {
+      // Performance & Noise Filter: Skip known styling and metadata keys
+      const noiseKeys = [
+         'attributes', 'style', 'id', 'type', 'color', 'background', 
+         'noticeType', 'alignment', 'direction', 'version', 'size', 'name'
+      ];
+      if (noiseKeys.includes(key)) continue;
+
+      if (typeof value === 'object' && value !== null) {
+        // Continue down the object tree
+        extracted += unwrapMondayNode(value);
+      } else if (typeof value === 'string') {
+        try {
+          // This catches the hidden stringified JSONs inside Notice block arrays!
+          const parsedVal = JSON.parse(value);
+          extracted += unwrapMondayNode(parsedVal);
+        } catch (err) {
+          // Ignore standard string metadata
         }
+      }
     }
   }
-  
-  return text;
-}
 
+  return extracted;
+};
+
+// --- PRIMARY BLOCK EXTRACTION ---
+
+/**
+ * Extracts clean text from Monday.com document blocks.
+ * CRITICAL: We process ALL block types. Do not filter out 'notice' or 'layout' types,
+ * because they contain critical project data nested deeply inside them.
+ */
+export const extractTextFromMondayBlocks = (blocks) => {
+  if (!blocks || !Array.isArray(blocks)) return "";
+
+  const extractedParagraphs = blocks.map(block => {
+    // Use cleanly provided markdown if available
+    if (block.markdown && block.markdown.trim() && block.markdown !== 'null') {
+      return block.markdown;
+    }
+    // Skip purely structural blocks with no content payload
+    if (!block.content) return "";
+    
+    return unwrapMondayNode(block.content);
+  });
+
+  // Filter empty results and join with double line breaks for clean AI consumption
+  return extractedParagraphs.filter(text => text.trim().length > 0).join('\n\n');
+};
+
+/**
+ * Legacy-compatible wrapper. Flattens nested block trees then extracts.
+ */
 export function parseMondayBlock(block) {
-  // Use cleanly provided markdown if available
   if (block.markdown && block.markdown.trim() && block.markdown !== 'null') {
     return block.markdown;
   }
-  // Otherwise, aggressively hunt for text inside the content payload
   if (block.content) {
-    const extracted = extractTextRecursively(block.content);
+    const extracted = unwrapMondayNode(block.content);
     return extracted ? extracted.trim() : '';
   }
   return '';
@@ -119,13 +157,26 @@ export function parseMondayBlock(block) {
 
 export const processDocumentBlocks = (blocks) => {
   if (!Array.isArray(blocks)) return '';
-  return blocks
-    .map(parseMondayBlock)
-    .filter(Boolean)
-    .join('\n\n');
+
+  // Flatten nested block trees first (layout/notice blocks nest text in child arrays)
+  const flattenBlocks = (blockList) => {
+    let flat = [];
+    for (const block of blockList) {
+      flat.push(block);
+      if (Array.isArray(block.children)) flat.push(...flattenBlocks(block.children));
+      if (Array.isArray(block.blocks)) flat.push(...flattenBlocks(block.blocks));
+      if (Array.isArray(block.child_blocks)) flat.push(...flattenBlocks(block.child_blocks));
+    }
+    return flat;
+  };
+
+  const allBlocks = flattenBlocks(blocks);
+
+  // Use the new deep unwrapper for extraction
+  return extractTextFromMondayBlocks(allBlocks);
 };
 
-// --- EXISTING DOC MAP LOGIC ---
+// --- DOC MAP LOGIC ---
 
 export async function fetchDocMap(boardInstance, itemIds, knownDocColumnIds = []) {
   const map = {};
