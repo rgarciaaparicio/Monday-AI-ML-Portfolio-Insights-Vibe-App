@@ -1,31 +1,54 @@
-import { Badge } from '@components/ui/badge';
 import { AlertTriangle, TrendingUp } from 'lucide-react';
 
-const sentimentStyles = {
-  positive: 'bg-[hsl(var(--chart-1))]/15 text-[hsl(var(--chart-1))]',
-  neutral: 'bg-muted text-muted-foreground',
-  concerning: 'bg-[hsl(var(--chart-2))]/15 text-[hsl(var(--chart-2))]',
-  critical: 'bg-destructive/15 text-destructive',
+const SENTIMENT_STYLE = {
+  positive: { bg: 'var(--color-green-100)', color: 'var(--color-green-800)', label: 'Positive' },
+  neutral: { bg: 'var(--color-gray-200)', color: 'var(--color-gray-700)', label: 'Neutral' },
+  concerning: { bg: 'var(--color-orange-100)', color: 'var(--color-orange-800)', label: 'Concerning' },
+  critical: { bg: 'var(--color-red-100)', color: 'var(--color-red-700)', label: 'Critical' },
 };
 
 export function InsightsDisplay({ insights }) {
+  const sentiment = SENTIMENT_STYLE[insights.sentiment] || SENTIMENT_STYLE.neutral;
+
   return (
-    <div className="space-y-3 pt-3">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
+      {/* LATEST UPDATE */}
       <div>
-        <p className="text-xs font-semibold text-muted-foreground mb-1">
+        <p className="label-small" style={{ marginBottom: 'var(--spacing-xs)' }}>
           Latest Update
         </p>
-        <p className="text-sm leading-relaxed">{insights.lastUpdate}</p>
+        <p className="body-medium" style={{ marginBottom: 0 }}>{insights.lastUpdate}</p>
       </div>
 
+      {/* BLOCKERS & RISKS */}
       {insights.blockers?.length > 0 && (
         <div>
-          <p className="text-xs font-semibold text-destructive mb-1 flex items-center gap-1">
-            <AlertTriangle className="h-3 w-3" /> Blockers & Risks
+          <p
+            className="label-small"
+            style={{
+              color: 'var(--color-red-600)',
+              marginBottom: 'var(--spacing-xs)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            <AlertTriangle size={14} />
+            Blockers & Risks
           </p>
-          <ul className="space-y-1">
+          <ul
+            style={{
+              margin: 0,
+              paddingLeft: 'var(--spacing-lg)',
+              listStyleType: 'disc',
+            }}
+          >
             {insights.blockers.map((b, i) => (
-              <li key={i} className="text-sm pl-3 relative before:content-['·'] before:absolute before:left-0 before:text-destructive before:font-bold">
+              <li
+                key={i}
+                className="body-small"
+                style={{ marginBottom: 'var(--spacing-xs)', color: 'var(--color-gray-700)' }}
+              >
                 {b}
               </li>
             ))}
@@ -33,14 +56,35 @@ export function InsightsDisplay({ insights }) {
         </div>
       )}
 
+      {/* HIGHLIGHTS */}
       {insights.highlights?.length > 0 && (
         <div>
-          <p className="text-xs font-semibold text-[hsl(var(--chart-1))] mb-1 flex items-center gap-1">
-            <TrendingUp className="h-3 w-3" /> Highlights
+          <p
+            className="label-small"
+            style={{
+              color: 'var(--color-cerulean-600)',
+              marginBottom: 'var(--spacing-xs)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            <TrendingUp size={14} />
+            Highlights
           </p>
-          <ul className="space-y-1">
+          <ul
+            style={{
+              margin: 0,
+              paddingLeft: 'var(--spacing-lg)',
+              listStyleType: 'disc',
+            }}
+          >
             {insights.highlights.map((h, i) => (
-              <li key={i} className="text-sm pl-3 relative before:content-['·'] before:absolute before:left-0 before:text-[hsl(var(--chart-1))] before:font-bold">
+              <li
+                key={i}
+                className="body-small"
+                style={{ marginBottom: 'var(--spacing-xs)', color: 'var(--color-gray-700)' }}
+              >
                 {h}
               </li>
             ))}
@@ -48,14 +92,20 @@ export function InsightsDisplay({ insights }) {
         </div>
       )}
 
-      <div className="flex items-center gap-2 pt-1">
-        <span className="text-xs text-muted-foreground">Sentiment:</span>
-        <Badge
-          variant="outline"
-          className={`text-xs capitalize ${sentimentStyles[insights.sentiment] || ''}`}
+      {/* SENTIMENT BADGE */}
+      <div className="applause-flex-row" style={{ gap: 'var(--spacing-sm)' }}>
+        <span className="body-small" style={{ color: 'var(--color-gray-500)' }}>
+          Sentiment:
+        </span>
+        <span
+          className="applause-badge"
+          style={{
+            backgroundColor: sentiment.bg,
+            color: sentiment.color,
+          }}
         >
-          {insights.sentiment}
-        </Badge>
+          {sentiment.label}
+        </span>
       </div>
     </div>
   );
