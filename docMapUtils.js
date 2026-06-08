@@ -1,33 +1,214 @@
 /**
  * docMapUtils.js
- * Ultimate Brute Force Extractor for Monday.com document blocks.
- * Bypasses undocumented structures by safely shredding the object graph
- * and extracting every single human-readable string.
- *
- * CRITICAL: The DocsSDK .get() only returns { id, markdown } per block.
- * Notice blocks, layout blocks, and widget blocks have markdown: null.
- * To get their content, we must query via raw GraphQL for the `content` field.
+ * Extracts text from Monday.com document blocks.
+ * 
+ * Monday docs API returns blocks where `content` can be:
+ * - A JSON STRING: '{"alignment":"left","direction":"ltr","deltaFormat":[{"insert":"text"}]}'
+ * - A parsed JSON OBJECT: {alignment:"left", direction:"ltr", deltaFormat:[{insert:"text"}]}
+ * 
+ * TEMPLATE DOCUMENTS:
+ * Some documents are templates with embedded column-value widgets. These appear
+ * as dynamic values in the browser (PO: 26789, Countries: Japan) but export as
+ * empty labels (PO:, Countries:) because the widgets reference column values
+ * rather than containing simple text. When this happens, we build a synthetic
+ * document from the board column data.
  */
 
 import { AimlPortfolioBoard } from '@api/BoardSDK.js';
 
-// Helper function to safely chunk arrays for GraphQL queries
-const chunkArray = (arr, size) =>
-  Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
-    arr.slice(i * size, i * size + size)
-  );
+/**
+ * Safely extracts text from any column value format.
+ * Handles: plain strings, numbers, objects with .text/.value/.label/.name,
+ * arrays of strings/objects, null/undefined.
+ */
+export function getColumnText(val) {
+  if (val == null) return '';
+  if (typeof val === 'string') return val;
+  if (typeof val === 'number') return String(val);
+  if (Array.isArray(val)) {
+    return val.map(v => {
+      if (typeof v === 'string') return v;
+      if (v && typeof v === 'object') return v.label || v.name || v.text || '';
+      return String(v || '');
+    }).filter(Boolean).join(', ');
+  }
+  if (typeof val === 'object') {
+    if (typeof val.text === 'string' && val.text) return val.text;
+    if (typeof val.value === 'string' && val.value) {
+      try {
+        const parsed = JSON.parse(val.value);
+        if (typeof parsed === 'string') return parsed;
+        if (parsed?.text) return parsed.text;
+      } catch { return val.value; }
+    }
+    if (typeof val.label === 'string') return val.label;
+    if (typeof val.name === 'string') return val.name;
+    return '';
+  }
+  return String(val);
+}
 
 /**
- * Fetches FULL doc blocks via raw GraphQL including the `content` field.
- * This is necessary because DocsSDK.doc().get() only returns markdown (null for notice blocks).
- * The `content` field contains the raw Quill Delta JSON that our extractor can parse.
+ * Measures "useful" text content in markdown — strips formatting, links, dividers.
+ */
+export function getUsefulTextLength(md) {
+  if (!md) return 0;
+  const stripped = md
+    .replace(/^[-*_]{3,}\s*$/gm, '')
+    .replace(/^\|[-\s|]*\|\s*$/gm, '')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[#*_~`>|]/g, '')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return stripped.length;
+}
+
+/**
+ * Cleans structural markdown noise.
+ */
+export function cleanMarkdownContent(md) {
+  if (!md) return '';
+  return md
+    .split('\n')
+    .filter(line => {
+      const t = line.trim();
+      if (/^[-*_]{3,}$/.test(t)) return false;
+      if (/^\|[-\s|]*\|$/.test(t)) return false;
+      if (t === '') return false;
+      if (/^https?:\/\/\S+$/.test(t)) return false;
+      return true;
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Builds a synthetic document from board column data.
+ * Used when the actual document is a template that references column values
+ * (embedded widgets) rather than containing simple text.
+ * 
+ * CRITICAL: Clearly separates BACKGROUND (static scope/requirements) from
+ * CURRENT STATUS (dynamic updates). This prevents the AI from treating
+ * project requirements as current status updates.
+ */
+export function buildSyntheticDoc(project) {
+  const parts = [];
+  parts.push(`# Project: ${project.name || 'Unknown Project'}`);
+  parts.push('');
+
+  // Current status indicators
+  const health = getColumnText(project.projectHealthRag);
+  const stage = getColumnText(project.stage);
+  const priority = getColumnText(project.priority);
+  parts.push('## CURRENT STATUS INDICATORS');
+  if (health) parts.push(`- Health (RAG): ${health}`);
+  if (stage) parts.push(`- Stage: ${stage}`);
+  if (priority) parts.push(`- Priority: ${priority}`);
+  parts.push('');
+
+  // ===== CURRENT STATUS SECTION (dynamic, from weekly updates) =====
+  const weekSummary = getColumnText(project.weekSummary);
+  const highlights = getColumnText(project.highlights);
+  const concerns = getColumnText(project.concernsissues);
+  const activation = getColumnText(project.activationNote);
+
+  const hasStatusContent = weekSummary || highlights || concerns;
+
+  if (hasStatusContent) {
+    parts.push('## CURRENT STATUS UPDATES (use these for latest update, blockers, highlights)');
+    if (weekSummary) { parts.push(`### Week Summary:`); parts.push(weekSummary); parts.push(''); }
+    if (highlights) { parts.push(`### Highlights:`); parts.push(highlights); parts.push(''); }
+    if (concerns) { parts.push(`### Concerns/Issues:`); parts.push(concerns); parts.push(''); }
+    if (activation) { parts.push(`### Activation Note:`); parts.push(activation); parts.push(''); }
+  } else {
+    parts.push('## CURRENT STATUS UPDATES');
+    parts.push('NO STATUS UPDATES AVAILABLE — Week Summary, Highlights, and Concerns columns are all empty.');
+    parts.push('');
+  }
+
+  // ===== PROJECT FACTS (include in summary — these are real project attributes) =====
+  parts.push('## PROJECT FACTS (mention these in your summary)');
+  const poId = getColumnText(project.poId);
+  if (poId) parts.push(`- PO: ${poId}`);
+  const countries = getColumnText(project.countries);
+  if (countries) parts.push(`- Country: ${countries}`);
+  const company = getColumnText(project.company);
+  if (company) parts.push(`- Company: ${company}`);
+  const projType = getColumnText(project.projectType);
+  if (projType) parts.push(`- Project Type: ${projType}`);
+  const collection = getColumnText(project.projectCollectionName);
+  if (collection) parts.push(`- Collection: ${collection}`);
+  if (project.OfParticipants) parts.push(`- # of Participants: ${project.OfParticipants}`);
+  if (project.artifactsPerParticipant) parts.push(`- Artifacts per Participant: ${project.artifactsPerParticipant}`);
+
+  // Team
+  const team = [];
+  if (project.owner?.length) team.push(`Owner: ${project.owner.map(p => p.name).join(', ')}`);
+  if (project.leadTe?.length) team.push(`Lead TE: ${project.leadTe.map(p => p.name).join(', ')}`);
+  if (project.tsm?.length) team.push(`TSM: ${project.tsm.map(p => p.name).join(', ')}`);
+  if (project.tpm?.length) team.push(`TPM: ${project.tpm.map(p => p.name).join(', ')}`);
+  if (project.sdm?.length) team.push(`SDM: ${project.sdm.map(p => p.name).join(', ')}`);
+  if (project.cmTeam?.length) team.push(`CM: ${project.cmTeam.map(p => p.name).join(', ')}`);
+  if (team.length) parts.push(`- Team: ${team.join('; ')}`);
+  parts.push('');
+
+  // ===== PROJECT SCOPE (do NOT convert into status updates) =====
+  const desc = getColumnText(project.projectDescription);
+  if (desc) {
+    parts.push('## PROJECT SCOPE (requirements — do NOT interpret as current activity)');
+    parts.push(desc);
+    parts.push('');
+  }
+
+  const result = parts.join('\n').trim();
+  console.log(`[buildSyntheticDoc] Built ${result.length} chars for "${project.name}" (hasStatusContent=${hasStatusContent})`);
+  return result;
+}
+
+/**
+ * Exports document content as markdown using the export_markdown_from_doc API.
+ */
+export async function exportDocAsMarkdown(docId) {
+  const board = new AimlPortfolioBoard();
+  try {
+    const query = `query exportDoc($docId: ID!) {
+      export_markdown_from_doc(docId: $docId) {
+        success
+        markdown
+        error
+      }
+    }`;
+    const res = await board.executeGraphQL(query, { docId: String(docId) });
+    const result = res?.data?.export_markdown_from_doc || res?.export_markdown_from_doc;
+
+    if (result?.success && result?.markdown) {
+      const md = result.markdown.trim();
+      const useful = getUsefulTextLength(md);
+      console.log(`[docMapUtils] export_markdown_from_doc returned ${md.length} raw chars, ${useful} useful chars for doc ${docId}`);
+      if (md.length > 0) {
+        console.log(`[docMapUtils] Markdown preview (first 300 chars): "${md.substring(0, 300)}"`);
+      }
+      return md;
+    }
+
+    if (result?.error) {
+      console.warn(`[docMapUtils] export_markdown_from_doc error for doc ${docId}: ${result.error}`);
+    }
+    return '';
+  } catch (e) {
+    console.warn(`[docMapUtils] export_markdown_from_doc failed for doc ${docId}:`, e.message);
+    return '';
+  }
+}
+
+/**
+ * Fetches doc blocks via raw GraphQL (fallback method).
  */
 export async function fetchDocBlocksRaw(docId) {
   const board = new AimlPortfolioBoard();
   try {
-    // CRITICAL: Monday's docs API defaults to 25 blocks only!
-    // Notice block child paragraphs are stored as separate blocks beyond index 25.
-    // Must use blocks(limit:1000) to get all content including notice box paragraphs.
     const query = `query getDocBlocks($docId: ID!) {
       docs(ids: [$docId]) {
         id
@@ -44,7 +225,7 @@ export async function fetchDocBlocksRaw(docId) {
     const docs = res?.data?.docs || res?.docs || [];
     if (docs.length > 0 && docs[0].blocks) {
       const blocks = docs[0].blocks;
-      console.log(`[docMapUtils] Fetched ${blocks.length} raw blocks for doc ${docId} (limit:1000)`);
+      console.log(`[docMapUtils] Fetched ${blocks.length} raw blocks for doc ${docId}`);
       return blocks;
     }
     return [];
@@ -55,289 +236,155 @@ export async function fetchDocBlocksRaw(docId) {
 }
 
 /**
- * Safely parses the raw JSON string from a Monday column value to extract a doc ID.
+ * Extracts text from a deltaFormat array (Quill Delta ops).
  */
-export function parseValue(raw) {
-  if (!raw || raw === 'null' || raw === '{}' || raw === '') return null;
-  
-  const trimmed = raw.trim();
-  
-  // 1. Direct number check
-  if (/^\d{8,15}$/.test(trimmed)) return trimmed;
-
-  // 2. The Sledgehammer: Regex scrape the raw string for Monday Doc URLs
-  if (typeof raw === 'string') {
-    const urlMatch = raw.match(/\/docs\/(\d+)/) || raw.match(/doc_id=(\d+)/);
-    if (urlMatch && urlMatch[1]) return urlMatch[1];
-  }
-  
-  // 3. Fallback to structured JSON parsing
-  try {
-    const parsed = JSON.parse(raw);
-    let foundId = null;
-
-    if (parsed?.files && Array.isArray(parsed.files)) {
-      for (const f of parsed.files) {
-        let extracted = f.document_id || f.asset_id || f.docId || f.doc_id || f.file_id || (f.is_document ? f.id : null);
-        if (extracted && /^\d+$/.test(String(extracted))) foundId = String(extracted);
-        if (!foundId && (f.fileId || f.objectId || f.id)) {
-            const idStr = String(f.fileId || f.objectId || f.id);
-            if (/^\d+$/.test(idStr)) foundId = idStr;
-        }
-        if (foundId) break;
+function extractFromDeltaFormat(deltaFormat) {
+  if (!Array.isArray(deltaFormat) || deltaFormat.length === 0) return '';
+  const parts = [];
+  for (const op of deltaFormat) {
+    if (!op || op.insert === undefined || op.insert === null) continue;
+    if (typeof op.insert === 'string') {
+      parts.push(op.insert);
+    } else if (typeof op.insert === 'object') {
+      const ins = op.insert;
+      // Try standard readable properties
+      const readable = ins.value || ins.text || ins.displayValue || ins.display_value
+        || ins.label || ins.name || ins.title || ins.content;
+      if (readable && typeof readable === 'string') {
+        parts.push(readable);
+      } else if (ins.mention) {
+        const mName = ins.mention.name || ins.mention.value || '';
+        if (mName) parts.push(mName);
       }
-    } else if (parsed?.linkedPulseIds && Array.isArray(parsed.linkedPulseIds)) {
-      foundId = parsed.linkedPulseIds[0]?.linkedPulseId;
-    } else {
-      foundId = parsed?.document_id || parsed?.documentId || parsed?.file?.document_id || parsed?.file?.docId || parsed?.file?.doc_id || parsed?.file?.id || parsed?.docId || parsed?.doc_id || parsed?.id || parsed?.objectId;
+      // Column value references — log for diagnostics
+      // These are embedded widgets that reference board columns
+      // They can't be resolved here — buildSyntheticDoc handles them
     }
-
-    return (foundId && /^\d+$/.test(String(foundId))) ? String(foundId) : null;
-  } catch (error) {
-    return null;
   }
+  return parts.join('');
 }
 
-// --- NEW ADVANCED BLOCK PARSER ---
+/**
+ * Extracts text from a content value (either string or object).
+ */
+function extractBlockText(content) {
+  if (!content) return '';
 
-const MAX_DEPTH = 100;
-const SKIP_KEYS = new Set([
-  'color',
-  'background',
-  'style',
-  'type',
-  'alignment',
-  'direction',
-  'id',
-  'parent_block_id',
-  'created_at',
-  'updated_at',
-  'position',
-  'afterBlockId',
-  'parentBlockId',
-  'block_id',
-  'blockId',
-  'userId',
-  'user_id',
-  'boardId',
-  'board_id',
-  'itemId',
-  'item_id',
-  'columnId',
-  'column_id',
-  'objectId',
-  'object_id',
-  'createdBy',
-  'updatedBy',
-  'theme',
-  'indentation'
-]);
+  let parsed = null;
+  if (typeof content === 'object' && content !== null) {
+    parsed = content;
+  } else if (typeof content === 'string') {
+    const trimmed = content.trim();
+    if (!trimmed || trimmed === 'null' || trimmed === '{}') return '';
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      if (trimmed.length > 3 && /[a-zA-Z]/.test(trimmed) && !trimmed.startsWith('<')) {
+        return trimmed;
+      }
+      return '';
+    }
+  } else {
+    return '';
+  }
 
-// Keys in column-value widget objects that hold human-readable content
-const VALUE_KEYS = new Set([
-  'value', 'text', 'displayValue', 'display_value', 'label',
-  'title', 'name', 'description', 'insert', 'content'
-]);
+  if (!parsed || typeof parsed !== 'object') return '';
 
+  if (parsed.deltaFormat) {
+    if (Array.isArray(parsed.deltaFormat)) return extractFromDeltaFormat(parsed.deltaFormat);
+    if (parsed.deltaFormat.ops && Array.isArray(parsed.deltaFormat.ops)) return extractFromDeltaFormat(parsed.deltaFormat.ops);
+  }
+  if (parsed.ops && Array.isArray(parsed.ops)) return extractFromDeltaFormat(parsed.ops);
+  if (parsed.text && typeof parsed.text === 'string') return parsed.text;
+
+  if (parsed.content) {
+    if (typeof parsed.content === 'string') {
+      try {
+        const inner = JSON.parse(parsed.content);
+        if (inner.deltaFormat && Array.isArray(inner.deltaFormat)) return extractFromDeltaFormat(inner.deltaFormat);
+        if (inner.ops && Array.isArray(inner.ops)) return extractFromDeltaFormat(inner.ops);
+      } catch { return parsed.content; }
+    } else if (typeof parsed.content === 'object') {
+      if (parsed.content.deltaFormat && Array.isArray(parsed.content.deltaFormat)) return extractFromDeltaFormat(parsed.content.deltaFormat);
+      if (parsed.content.ops && Array.isArray(parsed.content.ops)) return extractFromDeltaFormat(parsed.content.ops);
+    }
+  }
+
+  for (const [key, val] of Object.entries(parsed)) {
+    if (key === 'alignment' || key === 'direction' || key === 'theme' || key === 'indentation') continue;
+    if (val && typeof val === 'object') {
+      if (Array.isArray(val) && val.length > 0 && val[0]?.insert !== undefined) return extractFromDeltaFormat(val);
+      if (val.deltaFormat && Array.isArray(val.deltaFormat)) return extractFromDeltaFormat(val.deltaFormat);
+      if (val.ops && Array.isArray(val.ops)) return extractFromDeltaFormat(val.ops);
+    }
+  }
+
+  return '';
+}
+
+/**
+ * Processes an array of document blocks and extracts all text content.
+ */
 export const processDocumentBlocks = (blocks) => {
-  if (!Array.isArray(blocks) || blocks.length === 0) {
-    return '';
-  }
+  if (!Array.isArray(blocks) || blocks.length === 0) return '';
 
-  const seen = new WeakSet();
-  let depthWarningShown = false;
+  const textParts = [];
+  let extractedBlockCount = 0;
 
-  const extract = (node, depth = 0) => {
-    if (node == null) {
-      return '';
-    }
-
-    if (depth > MAX_DEPTH) {
-      if (!depthWarningShown) {
-        console.warn(`[docMapUtils] Maximum extraction depth (${MAX_DEPTH}) reached.`);
-        depthWarningShown = true;
-      }
-      return '';
-    }
-
-    // Prevent circular references (e.g., if DocsSDK links blocks to parents)
-    if (typeof node === 'object') {
-      if (seen.has(node)) {
-        return '';
-      }
-      seen.add(node);
-    }
-
-    // Numbers and booleans — convert to string so values like PO: 26789 are captured
-    if (typeof node === 'number') {
-      return String(node) + '\n';
-    }
-    if (typeof node === 'boolean') {
-      return String(node) + '\n';
-    }
-
-    // Strings
-    if (typeof node === 'string') {
-      const trimmed = node.trim();
-
-      if (!trimmed) {
-        return '';
-      }
-
-      // Monday frequently embeds double-stringified JSON
-      const firstChar = trimmed[0];
-      if (firstChar === '{' || firstChar === '[') {
-        try {
-          const parsed = JSON.parse(trimmed);
-          return extract(parsed, depth + 1);
-        } catch {
-          // Fall through if it's not valid JSON
-        }
-      }
-
-      // Force a newline to guarantee distinct text elements aren't crushed together
-      return trimmed + '\n';
-    }
-
-    // Arrays
-    if (Array.isArray(node)) {
-      return node
-        .map(item => extract(item, depth + 1))
-        .join('');
-    }
-
-    // Objects
-    if (typeof node === 'object') {
-      let output = '';
-
-      // Detect column-value widget references and try to extract readable data
-      if (node.type === 'column_values' || node.type === 'columnValues' || node.column_id || node.columnId) {
-        // Try to extract any displayable value from the reference
-        const refValue = node.value || node.text || node.displayValue || node.display_value || node.label;
-        if (refValue != null) {
-          output += extract(refValue, depth + 1);
-          return output;
-        }
-      }
-
-      // Handle Quill Delta object inserts (mentions, board refs, column value tags)
-      if (node.insert && typeof node.insert === 'object') {
-        // Object inserts often contain mentions, column refs, etc.
-        const ins = node.insert;
-        const readable = ins.value || ins.text || ins.displayValue || ins.display_value
-          || ins.label || ins.name || ins.title || ins.content;
-        if (readable != null) {
-          output += extract(readable, depth + 1);
-        } else {
-          // Traverse the insert object itself
-          output += extract(ins, depth + 1);
-        }
-        return output;
-      }
-
-      // Traverse all keys comprehensively. No short-circuits.
-      for (const [key, value] of Object.entries(node)) {
-        if (SKIP_KEYS.has(key)) {
-          continue;
-        }
-        output += extract(value, depth + 1);
-      }
-
-      return output;
-    }
-
-    return '';
-  };
-
-  const rawText = blocks.map(block => {
+  for (const block of blocks) {
+    if (!block) continue;
     let blockText = '';
-    // If the SDK provided cleanly formatted markdown, grab it first as a fallback
-    if (block.markdown && typeof block.markdown === 'string') {
-      blockText += block.markdown + '\n';
-    }
-    // Then aggressively hunt the object tree
-    blockText += extract(block);
-    return blockText;
-  }).join('\n');
 
-  // Cleanup + dedupe consecutive lines
-  const lines = rawText
-    .split('\n')
-    .map(line => line.trim().replace(/\s{2,}/g, ' '));
+    if (block.content) blockText = extractBlockText(block.content);
+    if (!blockText && block.markdown && typeof block.markdown === 'string') blockText = block.markdown;
 
-  const result = [];
-  let previousLine = null;
-
-  for (const line of lines) {
-    if (!line) {
-      if (result.length > 0 && result[result.length - 1] !== '') {
-        result.push('');
-      }
-      continue;
-    }
-
-    // Eradicate UUIDs from the LLM context to prevent noise
-    if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(line)) {
-      continue;
-    }
-
-    // Filter out notice block metadata that leaked through
-    const lower = line.toLowerCase();
-    if (['info', 'general', 'warning', 'tip', 'ltr', 'rtl', 'left', 'right', 'center',
-         'notice box', 'normal text', 'large title', 'medium title', 'small title',
-         'bulleted list', 'numbered list', 'check list', 'divider', 'code',
-         'user', 'mention', 'true', 'false'].includes(lower)) {
-      continue;
-    }
-
-    // Filter bare numeric IDs (user IDs, block position numbers)
-    if (/^\d{5,12}$/.test(line)) {
-      continue;
-    }
-
-    if (line !== previousLine) {
-      result.push(line);
-      previousLine = line;
+    if (blockText && blockText.trim()) {
+      textParts.push(blockText.trim());
+      extractedBlockCount++;
     }
   }
 
-  return result.join('\n').trim();
+  const rawText = textParts.join('\n');
+  const cleaned = rawText.replace(/\n{3,}/g, '\n\n').trim();
+
+  console.log(`[processDocumentBlocks] Extracted text from ${extractedBlockCount}/${blocks.length} blocks, total chars: ${cleaned.length}`);
+  if (cleaned.length === 0 && blocks.length > 0) {
+    console.warn(`[processDocumentBlocks] WARNING: No text extracted — blocks likely contain column value references (embedded widgets)`);
+    blocks.slice(0, 5).forEach((b, i) => {
+      const contentType = typeof b.content;
+      const preview = contentType === 'string'
+        ? b.content.substring(0, 200)
+        : JSON.stringify(b.content || null).substring(0, 200);
+      console.warn(`[processDocumentBlocks] Block ${i}: type="${b.type}", contentType=${contentType}, preview: ${preview}`);
+    });
+  }
+
+  return cleaned;
 };
 
 /**
- * Enriches extracted document text by filling in column-value widget placeholders
- * with actual board data. Monday's column-value widgets are live references that
- * store NO actual text in the document blocks — just boardId/itemId/columnId refs.
- * This function detects empty label patterns and injects real values.
+ * Enriches extracted document text with board column data.
+ * Handles markdown list prefixes like "- PO:", "* Countries:", "## Description:"
  */
 export const enrichExtractedText = (rawText, projectData) => {
   if (!rawText || !projectData) return rawText || '';
 
-  // Build a map of known labels to their board values
   const labelMap = {};
-  if (projectData.poId) labelMap['po'] = projectData.poId;
-  if (projectData.countries?.length) {
-    labelMap['countries'] = projectData.countries.map(c => c.label || c.name || c).join(', ');
-    labelMap['country'] = labelMap['countries'];
-  }
-  if (projectData.projectDescription) {
-    labelMap['description'] = projectData.projectDescription;
-    labelMap['project description'] = projectData.projectDescription;
-  }
-  if (projectData.company?.length) {
-    labelMap['company'] = projectData.company.map(c => c.label || c.name || c).join(', ');
-    labelMap['client'] = labelMap['company'];
-  }
-  if (projectData.projectType) {
-    labelMap['project type'] = typeof projectData.projectType === 'string' ? projectData.projectType : (projectData.projectType?.label || '');
-    labelMap['type'] = labelMap['project type'];
-  }
-  if (projectData.projectCollectionName) {
-    labelMap['collection'] = projectData.projectCollectionName;
-    labelMap['project collection name'] = projectData.projectCollectionName;
-  }
+  const poId = getColumnText(projectData.poId);
+  if (poId) labelMap['po'] = poId;
+  const participants = projectData.OfParticipants;
+  if (participants) labelMap['# of participants'] = String(participants);
+  const countries = getColumnText(projectData.countries);
+  if (countries) { labelMap['countries'] = countries; labelMap['country'] = countries; }
+  const desc = getColumnText(projectData.projectDescription);
+  if (desc) { labelMap['description'] = desc; labelMap['project description'] = desc; }
+  const company = getColumnText(projectData.company);
+  if (company) { labelMap['company'] = company; labelMap['client'] = company; }
+  const projType = getColumnText(projectData.projectType);
+  if (projType) { labelMap['project type'] = projType; labelMap['type'] = projType; }
+  const collection = getColumnText(projectData.projectCollectionName);
+  if (collection) labelMap['collection'] = collection;
 
-  // Team members
   const teamEntries = [];
   if (projectData.owner?.length) teamEntries.push(`Owner: ${projectData.owner.map(p => p.name).join(', ')}`);
   if (projectData.leadTe?.length) teamEntries.push(`Lead TE: ${projectData.leadTe.map(p => p.name).join(', ')}`);
@@ -347,29 +394,28 @@ export const enrichExtractedText = (rawText, projectData) => {
   if (projectData.cmTeam?.length) teamEntries.push(`CM: ${projectData.cmTeam.map(p => p.name).join(', ')}`);
   if (teamEntries.length) labelMap['team'] = teamEntries.join('; ');
 
-  // Process lines: fill in empty labels and remove pure noise
   const lines = rawText.split('\n');
   const enriched = [];
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
+    const line = lines[i];
+    const trimmed = line.trim();
 
-    // Detect pattern: "Label:" with nothing after it (value is on next line or missing)
-    const labelMatch = line.match(/^([^:]+):\s*$/);
+    // Match label lines with optional markdown list/heading/bold prefix:
+    const labelMatch = trimmed.match(/^(?:[-*+]\s+|#{1,6}\s+)?(?:\*{1,2})?([^:*]+?)(?:\*{1,2})?\s*:\s*(?:\*{1,2})?\s*$/);
     if (labelMatch) {
       const labelKey = labelMatch[1].trim().toLowerCase();
       if (labelMap[labelKey]) {
-        enriched.push(`${labelMatch[1]}: ${labelMap[labelKey]}`);
+        const prefix = line.match(/^(\s*(?:[-*+]\s+|#{1,6}\s+)?)/)?.[1] || '';
+        enriched.push(`${prefix}${labelMatch[1].trim()}: ${labelMap[labelKey]}`);
+        console.log(`[enrichExtractedText] Filled label "${labelKey}" with: "${labelMap[labelKey].substring(0, 50)}"`);
         continue;
       }
     }
 
-    // Detect pattern: "TSM: ; TPM: ; SDM: ; CM:" (empty team line)
-    if (/^(TSM|TPM|SDM|CM|Owner|Lead TE)\s*:.*;\s*(TSM|TPM|SDM|CM|Owner|Lead TE)\s*:/i.test(line)) {
-      if (teamEntries.length) {
-        enriched.push(teamEntries.join('; '));
-        continue;
-      }
+    // Handle team member lines
+    if (/^(TSM|TPM|SDM|CM|Owner|Lead TE)\s*:.*;\s*(TSM|TPM|SDM|CM|Owner|Lead TE)\s*:/i.test(trimmed)) {
+      if (teamEntries.length) { enriched.push(teamEntries.join('; ')); continue; }
     }
 
     enriched.push(line);
@@ -377,119 +423,3 @@ export const enrichExtractedText = (rawText, projectData) => {
 
   return enriched.join('\n');
 };
-
-// --- EXISTING DOC MAP LOGIC ---
-
-export async function fetchDocMap(boardInstance, itemIds, knownDocColumnIds = []) {
-  const map = {};
-  if (!itemIds || itemIds.length === 0) return map;
-
-  const uniqueItemIds = [...new Set(itemIds.map(String))];
-  const idChunks = chunkArray(uniqueItemIds, 50);
-
-  try {
-    for (const chunk of idChunks) {
-      const query = `
-        query getDocsByObjectIds($objectIds: [ID!]) {
-          docs(object_ids: $objectIds, limit: 100) { id object_id name }
-        }
-      `;
-      const res = await boardInstance.executeGraphQL(query, { objectIds: chunk.map(String) });
-      const docs = res?.data?.docs || res?.docs || [];
-      docs.forEach(d => {
-        if (d.object_id && d.id) {
-          map[String(d.object_id)] = String(d.id);
-        }
-      });
-    }
-  } catch (e) {
-    console.error('[DocMap] Strategy 1 failed:', e.message || e);
-  }
-
-  const unmappedItemIds = uniqueItemIds.filter(id => !map[id]);
-  if (unmappedItemIds.length > 0) {
-    try {
-      const unmappedChunks = chunkArray(unmappedItemIds, 50);
-      for (const chunk of unmappedChunks) {
-        const query = `
-          query getDocsFromItems($ids: [ID!]) {
-            items(ids: $ids) {
-              id name assets { id name file_extension public_url }
-              updates(limit: 5) { body assets { id name file_extension } }
-              column_values { id type value text }
-            }
-          }
-        `;
-        const res = await boardInstance.executeGraphQL(query, { ids: chunk });
-        const items = res?.data?.items || res?.items || [];
-
-        items.forEach(item => {
-          let foundDocId = null;
-          const docColumns = (item.column_values || []).filter(cv => 
-            knownDocColumnIds.includes(cv.id) || 
-            ['doc', 'direct_doc', 'file', 'workdoc', 'board_relation', 'link'].includes(cv.type) ||
-            (cv.value && typeof cv.value === 'string' && (cv.value.includes('document_id') || cv.value.includes('doc_id=') || cv.value.includes('fileId') || cv.value.includes('/docs/')))
-          );
-
-          for (const docCol of docColumns) {
-            const docId = parseValue(docCol.value) || parseValue(docCol.text);
-            if (docId) { foundDocId = docId; break; }
-          }
-
-          // 2C. Assets — ONLY accept assets that are clearly monday workdocs
-          // Skip generic file assets (PDFs, images, etc.) which cause "Doc not found" errors
-          if (!foundDocId && item.assets && item.assets.length > 0) {
-            const docAsset = item.assets.find(a =>
-              a.file_extension === 'monday' ||
-              (a.name && a.name.toLowerCase().includes('workdoc'))
-            );
-            if (docAsset) foundDocId = String(docAsset.id);
-          }
-
-          // 2D. Updates — only accept assets explicitly marked as monday workdocs
-          if (!foundDocId && item.updates && item.updates.length > 0) {
-            for (const upd of item.updates) {
-              const updAsset = (upd.assets || []).find(a => a.file_extension === 'monday');
-              if (updAsset) { foundDocId = String(updAsset.id); break; }
-              if (upd.body && upd.body.includes('doc_id=')) {
-                const match = upd.body.match(/doc_id=(\d+)/);
-                if (match) { foundDocId = match[1]; break; }
-              }
-            }
-          }
-          if (foundDocId) map[item.id] = foundDocId;
-        });
-      }
-    } catch (e) { console.error('[DocMap] Strategy 2 failed:', e.message || e); }
-  }
-
-  try {
-    const res = await boardInstance.executeGraphQL(`{ docs(object_ids: [18397543010], limit: 100) { id object_id name } }`);
-    const docs = res?.data?.docs || res?.docs || [];
-    const itemIdSet = new Set(uniqueItemIds);
-    docs.forEach(d => {
-      if (d.object_id && itemIdSet.has(String(d.object_id))) { map[String(d.object_id)] = String(d.id); } 
-      else if (d.name) { map['__name__' + d.name] = String(d.id); }
-    });
-  } catch (e) { /* silent fail */ }
-
-  const completelyUnmapped = uniqueItemIds.filter(id => !map[id]);
-  if (completelyUnmapped.length > 0) {
-    try {
-      const res = await boardInstance.executeGraphQL(`query { docs(limit: 200) { id name } }`);
-      const globalDocs = res?.data?.docs || res?.docs || [];
-      const itemsRes = await boardInstance.executeGraphQL(`query getNames($ids: [ID!]) { items(ids: $ids) { id name } }`, { ids: completelyUnmapped });
-      const unmappedItems = itemsRes?.data?.items || itemsRes?.items || [];
-      unmappedItems.forEach(item => {
-        const cleanItemName = (item.name || '').replace(/\[.*?\]|\(.*?\)/g, '').trim().toLowerCase();
-        const matchingDoc = globalDocs.find(d => {
-          const cleanDocName = (d.name || '').trim().toLowerCase();
-          return cleanDocName && cleanDocName.length > 3 && (cleanItemName.includes(cleanDocName) || cleanDocName.includes(cleanItemName));
-        });
-        if (matchingDoc) map[item.id] = String(matchingDoc.id);
-      });
-    } catch (e) { /* silent fail */ }
-  }
-
-  return map;
-}
