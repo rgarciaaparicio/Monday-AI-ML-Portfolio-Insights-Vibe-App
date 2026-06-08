@@ -1,0 +1,362 @@
+/* ==========================================================================
+   APPLAUSE BRAND DESIGN TOKENS (theme-tokens.css)
+   Ecosystem: Monday Vibe Apps - Portfolio Insights
+   Version: 1.2.0 (Enhanced with Base Styles & Component Utilities)
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Nunito+Sans:opsz,wght@6..12,300;6..12,400;6..12,500;6..12,600;6..12,700;6..12,800&display=swap');
+
+:root {
+  /* --- Fonts (Proxima Nova approximated via Nunito Sans for web) --- */
+  --font-heading: 'Nunito Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-body: 'Nunito Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-family-brand: 'Nunito Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  /* ==========================================================================
+     COLOR TOKENS (Page 29 - 82)
+     ========================================================================== */
+
+  /* --- Blue (Applause Brand Core) --- */
+  --color-blue-50:  #F7FBFE;
+  --color-blue-100: #E6F3FA;
+  --color-blue-200: #CFE9FB;
+  --color-blue-300: #94CBEB;
+  --color-blue-400: #489DCF;
+  --color-blue-500: #027284;
+  --color-blue-600: #025890;
+  --color-blue-700: #01446C;
+  --color-blue-800: #012E48;
+
+  /* --- Cerulean (uTest Community Core) --- */
+  --color-cerulean-100: #F2FBFC;
+  --color-cerulean-200: #D9F2F7;
+  --color-cerulean-300: #99DCEB;
+  --color-cerulean-400: #4DC2DB;
+  --color-cerulean-500: #00ABCC;
+  --color-cerulean-600: #0086A3;
+  --color-cerulean-700: #00657A;
+  --color-cerulean-800: #004352;
+
+  /* --- Aqua (Applause Secondary Accent) --- */
+  --color-aqua-100: #E6F9F6;
+  --color-aqua-200: #D3F4F0;
+  --color-aqua-300: #99E6DA;
+  --color-aqua-400: #4DD3BF;
+  --color-aqua-500: #00C0A3;
+  --color-aqua-600: #009482;
+  --color-aqua-700: #006052;
+  --color-aqua-800: #003A31;
+
+  /* --- Red (Status: Error / At Risk) --- */
+  --color-red-100: #FCF0EE;
+  --color-red-200: #F8DBD6;
+  --color-red-300: #EFABA0;
+  --color-red-400: #F16C56;
+  --color-red-500: #D42D0E;
+  --color-red-600: #AA240A;
+  --color-red-700: #811808;
+  --color-red-800: #551306;
+
+  /* --- Orange (Status: Severe Warning / Off Track) --- */
+  --color-orange-100: #FEF4EB;
+  --color-orange-200: #FDE7D4;
+  --color-orange-300: #FDC189;
+  --color-orange-400: #F19541;
+  --color-orange-500: #ED7200;
+  --color-orange-600: #BE5B00;
+  --color-orange-700: #8E4300;
+  --color-orange-800: #5F2000;
+
+  /* --- Yellow (Status: Warning / Primary CTA Highlight) --- */
+  --color-yellow-100: #FFFCF2;
+  --color-yellow-200: #FFF6D9;
+  --color-yellow-300: #FFE799;
+  --color-yellow-400: #FFD64D;
+  --color-yellow-500: #FFC400;
+  --color-yellow-600: #CC9D00;
+  --color-yellow-700: #BF6E00;
+  --color-yellow-800: #664600;
+
+  /* --- Green (Status: Success / On Track) --- */
+  --color-green-100: #F4FBF4;
+  --color-green-200: #DDF4DF;
+  --color-green-300: #A5E3AA;
+  --color-green-400: #40AE4A;
+  --color-green-500: #0F8919;
+  --color-green-600: #0E7415;
+  --color-green-700: #0A5910;
+  --color-green-800: #063E0B;
+
+  /* --- Grayscale & Neutrals --- */
+  --color-white:     #FFFFFF;
+  --color-gray-100:  #FAFAFA;
+  --color-gray-200:  #F0F0F0;
+  --color-gray-300:  #E0E0E0;
+  --color-gray-400:  #C2C2C2;
+  --color-gray-500:  #999999;
+  --color-gray-600:  #6B6B6B;
+  --color-gray-700:  #3D3D3D;
+  --color-gray-800:  #181818;
+  --color-black:     #000000;
+
+  /* --- Additional Permitted Colors (Charts, Graphs & Data Viz) --- */
+  --color-purple-100: #F4EAF9; --color-purple-300: #C39BE3; --color-purple-500: #64048A; --color-purple-700: #3D006C;
+  --color-pink-100: #FFF0F5;   --color-pink-300: #FFB2D0;   --color-pink-500: #FF58A2;   --color-pink-700: #9E3563;
+  --color-brown-100: #F1EBE6;  --color-brown-300: #BA9D87;  --color-brown-500: #75420F;  --color-brown-700: #462505;
+  --color-lime-100: #E7F9DD;   --color-lime-300: #B6EA95;   --color-lime-500: #83D938;   --color-lime-700: #4F861F;
+
+  /* --- Brand Gradients (Page 35) --- */
+  --gradient-blue: linear-gradient(135deg, #01446C 0%, #027284 100%);
+  --gradient-blue-aqua: linear-gradient(135deg, #027284 0%, #00C0A3 100%);
+  --gradient-blue-cerulean: linear-gradient(135deg, #027284 0%, #00ABCC 100%);
+
+  /* ==========================================================================
+     LAYOUT & SPACING TOKENS (Page 101 - 106)
+     ========================================================================== */
+
+  --spacing-xs-2:  2px;  --spacing-xs:    4px;  --spacing-sm:    8px;
+  --spacing-md:    16px; --spacing-lg:    24px; --spacing-xl:    32px;
+  --spacing-xl-2:  40px; --spacing-xl-3:  48px; --spacing-xl-4:  56px;
+
+  /* ==========================================================================
+     AESTHETICS & SURFACE STYLES (Page 94 - 100)
+     ========================================================================== */
+
+  /* --- Corner Radii --- */
+  --radius-none: 0px; --radius-xxs: 2px; --radius-xs: 4px; --radius-sm: 8px;
+  --radius-md: 16px; --radius-lg: 24px; --radius-xl: 32px; --radius-round: 9999px;
+
+  /* --- Shadows (Elevation Levels) --- */
+  --shadow-xs: 0px 2px 4px 0px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0px 4px 12px 0px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0px 8px 24px 0px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0px 16px 32px 0px rgba(0, 0, 0, 0.16);
+
+  /* ==========================================================================
+     SEMANTIC TOKENS (shadcn/Tailwind mapped from Applause brand)
+     ========================================================================== */
+
+  --radius: 0.5rem;
+
+  /* Background: brand gray-100 off-white */
+  --background: 0 0% 98%;
+  --foreground: 0 0% 9%;
+
+  /* Cards: clean white */
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 9%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 9%;
+
+  /* Primary: Applause Blue 500 (#027284) → HSL 189 97% 26% */
+  --primary: 189 97% 26%;
+  --primary-foreground: 0 0% 98%;
+
+  /* Secondary: light teal tint from brand blue-100 */
+  --secondary: 196 42% 95%;
+  --secondary-foreground: 200 30% 18%;
+
+  /* Muted: neutral gray-200 with cool lean */
+  --muted: 0 0% 94%;
+  --muted-foreground: 0 0% 42%;
+
+  /* Accent: Aqua 100 mapped */
+  --accent: 168 52% 94%;
+  --accent-foreground: 189 80% 22%;
+
+  /* Destructive: brand red-500 (#D42D0E) → HSL 10 88% 44% */
+  --destructive: 10 88% 44%;
+  --destructive-foreground: 0 0% 98%;
+
+  /* Borders: brand gray-300 */
+  --border: 0 0% 88%;
+  --input: 0 0% 88%;
+  --ring: 189 97% 26%;
+
+  /* Chart colors mapped to brand palette for data viz */
+  --chart-1: 189 97% 26%;
+  --chart-2: 168 100% 38%;
+  --chart-3: 191 100% 40%;
+  --chart-4: 274 95% 28%;
+  --chart-5: 34 100% 46%;
+}
+
+/* ==========================================================================
+   BASE HTML ELEMENTS (Forcing the Brand Identity)
+   ========================================================================== */
+
+body {
+  font-family: var(--font-family-brand);
+  color: var(--color-gray-800);
+  background-color: var(--color-gray-100);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+  padding: 0;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--color-gray-800);
+  margin-top: 0;
+  margin-bottom: var(--spacing-sm);
+}
+
+p {
+  color: var(--color-gray-700);
+  margin-top: 0;
+  margin-bottom: var(--spacing-md);
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--color-gray-300);
+  margin: var(--spacing-lg) 0;
+}
+
+/* ==========================================================================
+   TYPOGRAPHIC HIERARCHY (Page 83 - 93)
+   ========================================================================== */
+
+.display-title { font-size: 4rem; font-weight: 800; line-height: 1.1; letter-spacing: -0.019em; color: var(--color-gray-800); }
+.heading-1 { font-size: 3rem; font-weight: 800; line-height: 1.2; letter-spacing: -0.01em; color: var(--color-gray-800); }
+.heading-2 { font-size: 2rem; font-weight: 800; line-height: 1.25; letter-spacing: 0; color: var(--color-gray-800); }
+.heading-3 { font-size: 1.5rem; font-weight: 800; line-height: 1.25; letter-spacing: 0; color: var(--color-gray-800); }
+.heading-4 { font-size: 1.25rem; font-weight: 800; line-height: 1.35; letter-spacing: 0; color: var(--color-gray-800); }
+
+.title-1 { font-size: 1.125rem; font-weight: 700; line-height: 1.3; color: var(--color-gray-800); }
+.title-2 { font-size: 1rem; font-weight: 700; line-height: 1.35; color: var(--color-gray-800); }
+
+/* --- Labels & Captions --- */
+.label-small {
+  font-size: 0.875rem; font-weight: 600; line-height: 1.45;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-gray-600);
+}
+
+.body-large { font-size: 1.125rem; font-weight: 400; color: var(--color-gray-800); }
+.body-medium { font-size: 1rem; font-weight: 400; color: var(--color-gray-700); }
+.body-small { font-size: 0.875rem; font-weight: 400; color: var(--color-gray-700); }
+
+.brand-link {
+  color: var(--color-blue-500);
+  text-decoration: none;
+  font-weight: 600;
+  transition: color 0.2s ease;
+}
+.brand-link:hover { color: var(--color-blue-700); text-decoration: underline; }
+
+/* ==========================================================================
+   COMPONENT UTILITIES (Apply these classes in React)
+   ========================================================================== */
+
+/* --- 1. APPLAUSE CARDS --- */
+.applause-card {
+  background-color: var(--color-white);
+  border: 1px solid var(--color-gray-300);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.applause-card:hover {
+  box-shadow: var(--shadow-sm);
+  border-color: var(--color-gray-400);
+}
+
+/* --- 2. APPLAUSE BUTTONS --- */
+.applause-btn-primary {
+  background-color: var(--color-blue-500);
+  color: var(--color-white);
+  border: none;
+  border-radius: var(--radius-round);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  transition: all 0.2s ease;
+  box-shadow: var(--shadow-xs);
+}
+.applause-btn-primary:hover {
+  background-color: var(--color-blue-700);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.applause-btn-secondary {
+  background-color: var(--color-gray-100);
+  color: var(--color-gray-800);
+  border: 1px solid var(--color-gray-300);
+  border-radius: var(--radius-round);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.applause-btn-secondary:hover {
+  background-color: var(--color-gray-200);
+  border-color: var(--color-gray-400);
+}
+
+/* --- 3. APPLAUSE STATUS BADGES --- */
+.applause-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-md);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+/* Specific Badge States mapping strictly to brand guidelines */
+.applause-badge-error, .applause-badge-at-risk {
+  background-color: var(--color-red-100);
+  color: var(--color-red-700);
+}
+
+.applause-badge-warning, .applause-badge-off-track {
+  background-color: var(--color-orange-100);
+  color: var(--color-orange-800);
+}
+
+.applause-badge-success, .applause-badge-on-track {
+  background-color: var(--color-green-100);
+  color: var(--color-green-800);
+}
+
+.applause-badge-info, .applause-badge-active {
+  background-color: var(--color-cerulean-100);
+  color: var(--color-cerulean-800);
+}
+
+.applause-badge-neutral, .applause-badge-upcoming {
+  background-color: var(--color-gray-200);
+  color: var(--color-gray-700);
+}
+
+/* --- 4. LAYOUT UTILITIES --- */
+.applause-page-header {
+  margin-bottom: var(--spacing-xl);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--color-gray-300);
+}
+
+.applause-flex-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.applause-flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
