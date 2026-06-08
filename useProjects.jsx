@@ -3,7 +3,7 @@ import { AimlPortfolioBoard } from '@api/BoardSDK.js';
 import { fetchDocMap } from '@generated/hooks/docMapUtils';
 
 const board = new AimlPortfolioBoard();
-const COLS = ["projectStatusSummary", "projectHealthRag", "stage", "owner", "priority", "company", "projectType", "weekSummary", "concernsissues", "highlights", "activationNote"];
+const COLS = ["projectStatusSummary", "projectHealthRag", "stage", "owner", "priority", "company", "projectType", "weekSummary", "concernsissues", "highlights", "activationNote", "countries", "poId", "projectDescription", "leadTe", "tsm", "tpm", "sdm", "cmTeam", "projectCollectionName"];
 
 export function useProjects() {
   const [projects, setProjects] = useState([]);
@@ -16,11 +16,13 @@ export function useProjects() {
   const docMapRef = useRef({});
 
   const enrich = (items) => items.map(item => {
-    const sdk = item.projectStatusSummary;
-    const sdkId = sdk?.docId || sdk?.doc_id || sdk?.id || (typeof sdk === 'string' ? sdk : null);
+    // Check projectStatusSummary (doc column) from Board SDK
+    const summaryDoc = item.projectStatusSummary;
+    const sdkId = summaryDoc?.docId || summaryDoc?.doc_id || summaryDoc?.id || (typeof summaryDoc === 'string' ? summaryDoc : null);
+    // Fallback to fetchDocMap which checks direct_doc, file columns, and other strategies
     const mapId = docMapRef.current[item.id];
     if (!sdkId && !mapId) {
-      console.log(`[Enrich] "${item.name}": SDK raw=`, JSON.stringify(sdk), '| map=', mapId);
+      console.log(`[Enrich] "${item.name}": summaryDoc=`, JSON.stringify(summaryDoc), '| map=', mapId);
     }
     return { ...item, _docId: sdkId ? String(sdkId) : (mapId || null) };
   });
@@ -47,6 +49,10 @@ export function useProjects() {
       if (search) q = q.where({ name: { contains: search } });
       const pag = pageCursor ? { cursor: pageCursor } : { limit: 25 };
       const result = await q.withPagination(pag).execute();
+      // Fetch doc map for new items
+      const newItemIds = result.items.map(i => i.id);
+      const newDocMap = await fetchDocMap(board, newItemIds);
+      docMapRef.current = { ...docMapRef.current, ...newDocMap };
       setProjects(prev => append ? [...prev, ...enrich(result.items)] : enrich(result.items));
       setCursor(result.cursor);
     } catch (err) { console.error('Fetch failed:', err); }
