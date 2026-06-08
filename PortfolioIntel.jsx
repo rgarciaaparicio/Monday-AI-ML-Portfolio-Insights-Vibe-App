@@ -6,6 +6,7 @@ import { Skeleton } from '@components/ui/skeleton';
 import { useAI } from '@skills/ai-features.jsx';
 import DocsSDK from '@skills/docs-sdk.jsx';
 import { PortfolioReport } from '@generated/components/PortfolioReport';
+import { processDocumentBlocks, enrichExtractedText, fetchDocBlocksRaw } from '@generated/hooks/docMapUtils';
 import { Brain } from 'lucide-react';
 
 const SCHEMA = {
@@ -50,6 +51,12 @@ export function PortfolioIntel({ projects, loading }) {
   const buildContext = (project, docMd) => {
     let ctx = `## ${project.name} (Health: ${project.projectHealthRag || 'N/A'}, Stage: ${project.stage || 'N/A'})\n`;
     if (docMd) ctx += `Document:\n${docMd.slice(0, 3000)}\n`;
+    // Board column data supplements document content (column-value widgets are live refs, not text)
+    if (project.poId) ctx += `PO: ${project.poId}\n`;
+    if (project.countries?.length) ctx += `Countries: ${project.countries.map(c => c.label || c).join(', ')}\n`;
+    if (project.projectDescription) ctx += `Description: ${project.projectDescription}\n`;
+    if (project.company?.length) ctx += `Company: ${project.company.map(c => c.label || c).join(', ')}\n`;
+    if (project.projectType) ctx += `Project Type: ${project.projectType}\n`;
     if (project.weekSummary) ctx += `Week Summary: ${project.weekSummary}\n`;
     if (project.concernsissues) ctx += `Concerns/Issues: ${project.concernsissues}\n`;
     if (project.highlights) ctx += `Highlights: ${project.highlights}\n`;
@@ -67,10 +74,25 @@ export function PortfolioIntel({ projects, loading }) {
     const sections = [];
     for (let i = 0; i < withDocs.length; i++) {
       try {
-        const snap = await sdk.doc(String(withDocs[i]._docId)).get();
-        sections.push(buildContext(withDocs[i], snap.markdown));
+        // Fetch raw blocks via GraphQL (gets content field for notice/widget blocks)
+        const rawBlocks = await fetchDocBlocksRaw(withDocs[i]._docId);
+        let docContent = '';
+        if (rawBlocks.length > 0) {
+          const rawText = processDocumentBlocks(rawBlocks);
+          docContent = enrichExtractedText(rawText, withDocs[i]);
+        } else {
+          // Fallback to DocsSDK if GraphQL fails
+          const snap = await sdk.doc(String(withDocs[i]._docId)).get();
+          const rawText = processDocumentBlocks(snap.blocks);
+          docContent = enrichExtractedText(rawText, withDocs[i]);
+        }
+        sections.push(buildContext(withDocs[i], docContent));
       } catch (e) {
-        console.error(`Doc fetch failed: ${withDocs[i].name}`, e);
+        // "not found" means the _docId is likely a file asset, not a workdoc — skip silently
+        const isNotFound = e?.message?.toLowerCase().includes('not found');
+        if (!isNotFound) {
+          console.error(`Doc fetch failed: ${withDocs[i].name}`, e);
+        }
         sections.push(buildContext(withDocs[i], null));
       }
       setProgress({ current: i + 1, total: withDocs.length });
