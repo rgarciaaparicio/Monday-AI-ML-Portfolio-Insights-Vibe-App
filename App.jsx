@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@components/ui/tabs';
 import { ProjectExplorer } from '@generated/components/ProjectExplorer';
 import { PortfolioIntel } from '@generated/components/PortfolioIntel';
+import { BrandHeader } from '@generated/components/BrandHeader';
 import { useProjects } from '@generated/hooks/useProjects';
 
 export default function App() {
@@ -11,14 +12,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-background p-4 md:p-6 lg:p-8">
-      <header className="mb-6">
-        <h1 className="text-2xl md:text-3xl font-[family-name:var(--font-heading)] font-light tracking-tight text-foreground">
-          Portfolio Intelligence
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          AI/ML Portfolio · Extract and analyze project status documents
-        </p>
-      </header>
+      <BrandHeader />
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
